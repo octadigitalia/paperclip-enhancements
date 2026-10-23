@@ -106,6 +106,9 @@ export async function prepareOpenCodeRuntimeConfig(input: {
   env: Record<string, string>;
   config: Record<string, unknown>;
   targetIsRemote?: boolean;
+  runtimeMcp?: {
+    getServers?: () => Promise<Array<Record<string, unknown>>> | Array<Record<string, unknown>>;
+  } | null;
 }): Promise<PreparedOpenCodeRuntimeConfig> {
   const skipPermissions = asBoolean(input.config.dangerouslySkipPermissions, true);
   if (!skipPermissions) {
@@ -129,7 +132,25 @@ export async function prepareOpenCodeRuntimeConfig(input: {
     };
   }
 
-  const sourceConfigDir = path.join(resolveXdgConfigHome(input.env), "opencode");
+  const resolvedXdgHome = resolveXdgConfigHome(input.env);
+  const candidateConfigDirs = [
+    path.join(resolvedXdgHome, "opencode"),
+    "/paperclip/.config/opencode",
+    "/root/.config/opencode",
+    path.join(os.homedir(), ".config", "opencode"),
+  ];
+
+  let sourceConfigDir = path.join(resolvedXdgHome, "opencode");
+  for (const dir of candidateConfigDirs) {
+    try {
+      const stat = await fs.stat(path.join(dir, "opencode.json"));
+      if (stat.isFile()) {
+        sourceConfigDir = dir;
+        break;
+      }
+    } catch {}
+  }
+
   const runtimeConfigHome = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-opencode-config-"));
   const runtimeConfigDir = path.join(runtimeConfigHome, "opencode");
   const runtimeConfigPath = path.join(runtimeConfigDir, "opencode.json");
@@ -140,7 +161,7 @@ export async function prepareOpenCodeRuntimeConfig(input: {
       recursive: true,
       force: true,
       errorOnExist: false,
-      dereference: false,
+      dereference: true,
     });
   } catch (err) {
     if ((err as NodeJS.ErrnoException | null)?.code !== "ENOENT") {
@@ -148,7 +169,16 @@ export async function prepareOpenCodeRuntimeConfig(input: {
     }
   }
 
-  const existingConfig = await readJsonObject(runtimeConfigPath);
+  let existingConfig = await readJsonObject(runtimeConfigPath);
+  if (Object.keys(existingConfig).length === 0) {
+    for (const dir of candidateConfigDirs) {
+      const candidate = await readJsonObject(path.join(dir, "opencode.json"));
+      if (Object.keys(candidate).length > 0) {
+        existingConfig = candidate;
+        break;
+      }
+    }
+  }
   const notes = [
     "Injected runtime OpenCode config with permission=allow for all tools and connections.",
   ];
@@ -202,12 +232,83 @@ export async function prepareOpenCodeRuntimeConfig(input: {
     }
   }
 
+  // Preserve and merge MCP servers into the runtime OpenCode config
+  const existingMcp = isPlainObject(existingConfig.mcp)
+    ? { ...(existingConfig.mcp as Record<string, unknown>) }
+    : {};
+  let nextMcp: Record<string, unknown> = { ...existingMcp };
+
+  // Fallback: if composio is missing from existingMcp, try reading it from the container's persistent config
+  if (!nextMcp.composio) {
+    try {
+      const pCfg = await readJsonObject("/paperclip/.config/opencode/opencode.json");
+      if (isPlainObject(pCfg.mcp)) {
+        for (const [k, v] of Object.entries(pCfg.mcp as Record<string, unknown>)) {
+          if (!nextMcp[k]) nextMcp[k] = v;
+        }
+      }
+    } catch {}
+  }
+
+  // Merge runtime MCP servers passed from Paperclip runner
+  if (input.runtimeMcp && typeof input.runtimeMcp.getServers === "function") {
+    try {
+      const runtimeServers = await input.runtimeMcp.getServers();
+      if (Array.isArray(runtimeServers)) {
+        for (const s of runtimeServers) {
+          if (!s || typeof s !== "object") continue;
+          const sObj = s as Record<string, unknown>;
+          const rawName = String(sObj.name || "").trim().toLowerCase();
+          const cleanName = rawName.replace(/[^a-z0-9_-]/g, "-") || "paperclip-server";
+          if (typeof sObj.url === "string" && sObj.url.trim().length > 0) {
+            const headers: Record<string, string> = {};
+            if (isPlainObject(sObj.headers)) {
+              for (const [hk, hv] of Object.entries(sObj.headers as Record<string, unknown>)) {
+                if (typeof hv === "string") headers[hk] = hv;
+              }
+            }
+            if (typeof sObj.token === "string" && sObj.token.trim().length > 0) {
+              headers["Authorization"] = `Bearer ${sObj.token.trim()}`;
+            }
+            nextMcp[cleanName] = {
+              type: "remote",
+              url: sObj.url.trim(),
+              ...(Object.keys(headers).length > 0 ? { headers } : {}),
+            };
+          } else if (typeof sObj.command === "string" && sObj.command.trim().length > 0) {
+            const args = Array.isArray(sObj.args) ? sObj.args.map((a) => String(a)) : [];
+            const envMap: Record<string, string> = {};
+            if (isPlainObject(sObj.env)) {
+              for (const [ek, ev] of Object.entries(sObj.env as Record<string, unknown>)) {
+                if (typeof ev === "string") envMap[ek] = ev;
+              }
+            }
+            nextMcp[cleanName] = {
+              type: "local",
+              command: [sObj.command.trim(), ...args],
+              ...(Object.keys(envMap).length > 0 ? { environment: envMap } : {}),
+            };
+          }
+        }
+      }
+    } catch {}
+  }
+
+  if (Object.keys(nextMcp).length > 0) {
+    notes.push(
+      `Injected ${Object.keys(nextMcp).length} MCP server(s) into runtime OpenCode config: ${Object.keys(nextMcp).join(", ")}.`,
+    );
+  }
+
   const nextConfig: Record<string, unknown> = {
     ...existingConfig,
     permission: "allow",
   };
   if (Object.keys(nextProvider).length > 0) {
     nextConfig.provider = nextProvider;
+  }
+  if (Object.keys(nextMcp).length > 0) {
+    nextConfig.mcp = nextMcp;
   }
 
   // Pin OpenCode's auxiliary "small" model (used for session-title generation and
