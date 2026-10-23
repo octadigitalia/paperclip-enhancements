@@ -93,62 +93,28 @@ try {
   const aiConnDist = '/app/server/dist/services/ai-connections.js';
   if (fs.existsSync(aiConnDist)) {
     let code = fs.readFileSync(aiConnDist, 'utf-8');
-    const targetPattern = /if\s*\(!installs\.length\s*&&\s*!\(\(input\.allowUninstalledPersonal\s*&&[\s\S]*?throw forbidden\("This connection is not permitted for this agent"\);/m;
-    if (targetPattern.test(code)) {
-      const replacement = `if (!installs.length &&
-            !((input.allowUninstalledPersonal &&
-                grant.kind === "user" && grant.subjectUserId === userId) ||
-                (input.allowUninstalledShared && binding.mode === "shared" && grant.kind === "organization"))) {
-            if (connection.companyId === companyId) {
-                try {
-                    await db.insert(toolConnectionInstalls).values({
-                        companyId,
-                        connectionId: connection.id,
-                        targetType: "agent",
-                        targetId: agentId,
-                        createdByUserId: userId || connection.createdByUserId || null,
-                    }).onConflictDoNothing();
-                } catch (e) {}
-            } else {
-                throw forbidden("This connection is not permitted for this agent");
-            }
-        }`;
-      code = code.replace(targetPattern, replacement);
-      fs.writeFileSync(aiConnDist, code, 'utf-8');
-      console.log('[patch] server/dist/services/ai-connections.js auto-install permission unlocked');
+    if (!code.includes('/* auto-install unlocked */')) {
+      const targetStr = 'if (!installs.length &&\n            !((input.allowUninstalledPersonal &&\n                grant.kind === "user" && grant.subjectUserId === userId) ||\n                (input.allowUninstalledShared && binding.mode === "shared" && grant.kind === "organization")))\n            throw forbidden("This connection is not permitted for this agent");';
+      const replacementStr = '/* auto-install unlocked */\n        if (!installs.length &&\n            !((input.allowUninstalledPersonal &&\n                grant.kind === "user" && grant.subjectUserId === userId) ||\n                (input.allowUninstalledShared && binding.mode === "shared" && grant.kind === "organization"))) {\n            if (connection.companyId !== companyId) {\n                throw forbidden("This connection is not permitted for this agent");\n            }\n        }';
+      if (code.includes(targetStr)) {
+        code = code.replace(targetStr, replacementStr);
+        fs.writeFileSync(aiConnDist, code, 'utf-8');
+        console.log('[patch] server/dist/services/ai-connections.js auto-install permission unlocked');
+      }
     }
   }
 
   const aiConnSrc = '/app/server/src/services/ai-connections.ts';
   if (fs.existsSync(aiConnSrc)) {
     let src = fs.readFileSync(aiConnSrc, 'utf-8');
-    const targetSrcPattern = /if\s*\(\s*!installs\.length\s*&&\s*!\(\s*\(input\.allowUninstalledPersonal[\s\S]*?throw forbidden\("This connection is not permitted for this agent"\);/m;
-    if (targetSrcPattern.test(src)) {
-      const srcReplacement = `if (
-      !installs.length &&
-      !(
-        (input.allowUninstalledPersonal &&
-          grant.kind === "user" && grant.subjectUserId === userId) ||
-        (input.allowUninstalledShared && binding.mode === "shared" && grant.kind === "organization")
-      )
-    ) {
-      if (connection.companyId === companyId) {
-        try {
-          await db.insert(toolConnectionInstalls).values({
-            companyId,
-            connectionId: connection.id,
-            targetType: "agent",
-            targetId: agentId,
-            createdByUserId: userId || connection.createdByUserId || null,
-          }).onConflictDoNothing();
-        } catch (e) {}
-      } else {
-        throw forbidden("This connection is not permitted for this agent");
+    if (!src.includes('/* auto-install unlocked */')) {
+      const targetSrc = 'if (\n      !installs.length &&\n      !(\n        (input.allowUninstalledPersonal &&\n          grant.kind === "user" && grant.subjectUserId === userId) ||\n        (input.allowUninstalledShared && binding.mode === "shared" && grant.kind === "organization")\n      )\n    )\n      throw forbidden("This connection is not permitted for this agent");';
+      const replacementSrc = '/* auto-install unlocked */\n    if (\n      !installs.length &&\n      !(\n        (input.allowUninstalledPersonal &&\n          grant.kind === "user" && grant.subjectUserId === userId) ||\n        (input.allowUninstalledShared && binding.mode === "shared" && grant.kind === "organization")\n      )\n    ) {\n      if (connection.companyId !== companyId) {\n        throw forbidden("This connection is not permitted for this agent");\n      }\n    }';
+      if (src.includes(targetSrc)) {
+        src = src.replace(targetSrc, replacementSrc);
+        fs.writeFileSync(aiConnSrc, src, 'utf-8');
+        console.log('[patch] server/src/services/ai-connections.ts auto-install permission unlocked');
       }
-    }`;
-      src = src.replace(targetSrcPattern, srcReplacement);
-      fs.writeFileSync(aiConnSrc, src, 'utf-8');
-      console.log('[patch] server/src/services/ai-connections.ts auto-install permission unlocked');
     }
   }
 } catch (e) {
