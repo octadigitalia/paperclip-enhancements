@@ -319,23 +319,25 @@ try {
 } catch (e) { console.error('[patch] Error explicit-continuation:', e.message); }
 
 
-// 12. NATIVE FRONTEND UI ADAPTER FOR ANTIGRAVITY
+// 12. NATIVE FRONTEND UI ADAPTER & STATEFUL PARSER (Antigravity and OpenCode)
 try {
+  const path = require('path');
   const indexHtmlPath = '/app/ui/dist/index.html';
-  if (fs.existsSync(indexHtmlPath)) {
-    let html = fs.readFileSync(indexHtmlPath, 'utf8');
-    if (!html.includes('index-v3.js')) {
-      html = html.replace(/index-[a-zA-Z0-9_-]+.js/g, 'index-v3.js');
-      fs.writeFileSync(indexHtmlPath, html, 'utf8');
-      console.log('[patch] index.html updated to index-v3.js');
+  const bundlePath = '/app/ui/dist/assets/index-v3.js';
+  const assetsDir = '/app/ui/dist/assets';
+
+  let baseSrc = null;
+  if (fs.existsSync(assetsDir)) {
+    const files = fs.readdirSync(assetsDir);
+    const candidate = files.find(f => f.startsWith('index-') && f.endsWith('.js') && f !== 'index-v3.js');
+    if (candidate) {
+      baseSrc = path.join(assetsDir, candidate);
     }
   }
 
-  const bundlePath = '/app/ui/dist/assets/index-v3.js';
-  const origPath = '/app/ui/dist/assets/index-ChaaJ8xT.js.bak';
-  const baseSrc = fs.existsSync(origPath) ? origPath : '/app/ui/dist/assets/index-ChaaJ8xT.js';
+  if (baseSrc && fs.existsSync(baseSrc) && !fs.existsSync(bundlePath)) {
+    let code = fs.readFileSync(baseSrc, 'utf8');
 
-  if (!fs.existsSync(bundlePath)) {
     const parserCode = `
 function parseAntigravityLine(line,ts){
   var trimmed=line.trim();
@@ -417,70 +419,8 @@ function parseAntigravityLine(line,ts){
 }
 var antigravityLocalUIAdapter={type:'antigravity_local',label:'Google Antigravity',parseStdoutLine:parseAntigravityLine};
 `;
-    let code = fs.readFileSync(baseSrc, 'utf8');
-    const targetRegister = 'function $He(){for(const e of[';
-    if (code.includes(targetRegister)) {
-      code = code.replace(targetRegister, parserCode + '\n' + targetRegister + 'antigravityLocalUIAdapter,');
-    }
-    const targetYTe = 'new Set(["claude_local",';
-    if (code.includes(targetYTe)) {
-      code = code.replace(targetYTe, 'new Set(["antigravity_local","claude_local",');
-    }
-    fs.writeFileSync(bundlePath, code, 'utf8');
-    console.log('[patch] index-v3.js created with built-in antigravity adapter');
-  }
-} catch (e) { console.error('[patch] Error frontend bundle patch:', e.message); }
 
-
-// 13. ANTIGRAVITY ADAPTER SKILLS SUPPORT
-try {
-  const srvDist = "/paperclip/adapters/antigravity-local/dist/server/index.js";
-  if (fs.existsSync(srvDist)) {
-    let code = fs.readFileSync(srvDist, "utf8");
-    if (!code.includes("listSkills: listAntigravitySkills")) {
-      if (!code.includes("listAntigravitySkills")) {
-        code = code.replace(
-          'import { getConfigSchema } from "./config.js";',
-          'import { getConfigSchema } from "./config.js";\nimport { listAntigravitySkills, syncAntigravitySkills } from "./skills.js";'
-        );
-      }
-      code = code.replace(
-        'instructionsPathKey: "instructionsFilePath",',
-        'instructionsPathKey: "instructionsFilePath",\n        requiresMaterializedRuntimeSkills: true,\n        listSkills: listAntigravitySkills,\n        syncSkills: syncAntigravitySkills,'
-      );
-      fs.writeFileSync(srvDist, code, "utf8");
-      console.log("[patch] antigravity dist/server/index.js patched with skills support");
-    }
-  }
-
-  const srvSrc = "/paperclip/adapters/antigravity-local/src/server/index.ts";
-  if (fs.existsSync(srvSrc)) {
-    let code = fs.readFileSync(srvSrc, "utf8");
-    if (!code.includes("listSkills: listAntigravitySkills")) {
-      if (!code.includes("listAntigravitySkills")) {
-        code = code.replace(
-          'import { getConfigSchema } from "./config.js";',
-          'import { getConfigSchema } from "./config.js";\nimport { listAntigravitySkills, syncAntigravitySkills } from "./skills.js";'
-        );
-      }
-      code = code.replace(
-        'instructionsPathKey: "instructionsFilePath",',
-        'instructionsPathKey: "instructionsFilePath",\n    requiresMaterializedRuntimeSkills: true,\n    listSkills: listAntigravitySkills,\n    syncSkills: syncAntigravitySkills,'
-      );
-      fs.writeFileSync(srvSrc, code, "utf8");
-      console.log("[patch] antigravity src/server/index.ts patched with skills support");
-    }
-  }
-} catch (e) { console.error("[patch] Error updating skills support in antigravity adapter:", e.message); }
-
-
-// 14. OPENCODE STATEFUL UI PARSER (Fold intermediate thoughts into thinking)
-try {
-  const bundlePath = '/app/ui/dist/assets/index-v3.js';
-  if (fs.existsSync(bundlePath)) {
-    let code = fs.readFileSync(bundlePath, 'utf8');
-    if (!code.includes('createOpenCodeStdoutParser')) {
-      const opencodeParserCode = `
+    const opencodeParserCode = `
 function createOpenCodeStdoutParser(){
   var pendingTexts = [];
   return {
@@ -510,7 +450,8 @@ function createOpenCodeStdoutParser(){
             }
             pendingTexts = [];
           }
-          return flushed.concat(BWe(parsed, ts));
+          var toolEntries = typeof BWe === 'function' ? BWe(parsed, ts) : [{ kind: 'stdout', ts: ts, text: line }];
+          return flushed.concat(toolEntries);
         }
         if (type === 'step_start') {
           var sId = String(parsed.sessionID || '');
@@ -566,7 +507,7 @@ function createOpenCodeStdoutParser(){
             }
             pendingTexts = [];
           }
-          var errTxt = FWe(parsed.error || parsed.message) || line;
+          var errTxt = (typeof FWe === 'function' ? FWe(parsed.error || parsed.message) : null) || line;
           flushed3.push({ kind: 'stderr', ts: ts, text: errTxt });
           return flushed3;
         }
@@ -579,16 +520,79 @@ function createOpenCodeStdoutParser(){
   };
 }
 `;
-      code = opencodeParserCode + '\n' + code;
-      code = code.replace(
-        'parseStdoutLine:qWe,ConfigFields:WWe',
-        'parseStdoutLine:qWe,createStdoutParser:createOpenCodeStdoutParser,ConfigFields:WWe'
-      );
-      fs.writeFileSync(bundlePath, code, 'utf8');
-      console.log('[patch] index-v3.js patched with stateful createOpenCodeStdoutParser');
+
+    code = parserCode + '\n' + opencodeParserCode + '\n' + code;
+
+    const targetRegisterMatch = code.match(/function\s+[A-Za-z0-9_$]+\(\)\{for\(const\s+[A-Za-z0-9_$]+\s+of\[/);
+    if (targetRegisterMatch) {
+      code = code.replace(targetRegisterMatch[0], targetRegisterMatch[0] + 'antigravityLocalUIAdapter,');
+      console.log('[patch] registerBuiltInUIAdapters patched with antigravityLocalUIAdapter');
+    }
+
+    const targetOc = code.match(/type:"opencode_local",label:"OpenCode",parseStdoutLine:[A-Za-z0-9_$]+/);
+    if (targetOc) {
+      code = code.replace(targetOc[0], targetOc[0] + ',createStdoutParser:createOpenCodeStdoutParser');
+      console.log('[patch] opencode_local patched with createStdoutParser');
+    }
+
+    fs.writeFileSync(bundlePath, code, 'utf8');
+    console.log('[patch] index-v3.js created with built-in antigravity adapter and opencode stateful parser');
+  }
+
+  if (fs.existsSync(indexHtmlPath)) {
+    let html = fs.readFileSync(indexHtmlPath, 'utf8');
+    if (!html.includes('index-v3.js')) {
+      html = html.replace(/index-[a-zA-Z0-9_-]+.js/g, 'index-v3.js');
+      fs.writeFileSync(indexHtmlPath, html, 'utf8');
+      console.log('[patch] index.html updated to index-v3.js');
     }
   }
-} catch (e) { console.error('[patch] Error updating opencode parser in index-v3.js:', e.message); }
+} catch (e) { console.error('[patch] Error frontend bundle patch:', e.message); }
+
+
+// 13. ANTIGRAVITY ADAPTER SKILLS SUPPORT
+try {
+  const srvDist = "/paperclip/adapters/antigravity-local/dist/server/index.js";
+  if (fs.existsSync(srvDist)) {
+    let code = fs.readFileSync(srvDist, "utf8");
+    if (!code.includes("listSkills: listAntigravitySkills")) {
+      if (!code.includes("listAntigravitySkills")) {
+        code = code.replace(
+          'import { getConfigSchema } from "./config.js";',
+          'import { getConfigSchema } from "./config.js";\nimport { listAntigravitySkills, syncAntigravitySkills } from "./skills.js";'
+        );
+      }
+      code = code.replace(
+        'instructionsPathKey: "instructionsFilePath",',
+        'instructionsPathKey: "instructionsFilePath",\n        requiresMaterializedRuntimeSkills: true,\n        listSkills: listAntigravitySkills,\n        syncSkills: syncAntigravitySkills,'
+      );
+      fs.writeFileSync(srvDist, code, "utf8");
+      console.log("[patch] antigravity dist/server/index.js patched with skills support");
+    }
+  }
+
+  const srvSrc = "/paperclip/adapters/antigravity-local/src/server/index.ts";
+  if (fs.existsSync(srvSrc)) {
+    let code = fs.readFileSync(srvSrc, "utf8");
+    if (!code.includes("listSkills: listAntigravitySkills")) {
+      if (!code.includes("listAntigravitySkills")) {
+        code = code.replace(
+          'import { getConfigSchema } from "./config.js";',
+          'import { getConfigSchema } from "./config.js";\nimport { listAntigravitySkills, syncAntigravitySkills } from "./skills.js";'
+        );
+      }
+      code = code.replace(
+        'instructionsPathKey: "instructionsFilePath",',
+        'instructionsPathKey: "instructionsFilePath",\n    requiresMaterializedRuntimeSkills: true,\n    listSkills: listAntigravitySkills,\n    syncSkills: syncAntigravitySkills,'
+      );
+      fs.writeFileSync(srvSrc, code, "utf8");
+      console.log("[patch] antigravity src/server/index.ts patched with skills support");
+    }
+  }
+} catch (e) { console.error("[patch] Error updating skills support in antigravity adapter:", e.message); }
+
+
+
 
 
 // OPENCODE AND ANTIGRAVITY INSTRUCTION SYNC FIX (providerStop.collectBeforeRestore)
