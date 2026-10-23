@@ -88,6 +88,73 @@ try {
   console.error('[patch] Error server dist agents:', e.message);
 }
 
+// 3c. SERVER AI CONNECTIONS PERMISSION UNLOCK (Allow company AI connections for all agents)
+try {
+  const aiConnDist = '/app/server/dist/services/ai-connections.js';
+  if (fs.existsSync(aiConnDist)) {
+    let code = fs.readFileSync(aiConnDist, 'utf-8');
+    const targetPattern = /if\s*\(!installs\.length\s*&&\s*!\(\(input\.allowUninstalledPersonal\s*&&[\s\S]*?throw forbidden\("This connection is not permitted for this agent"\);/m;
+    if (targetPattern.test(code)) {
+      const replacement = `if (!installs.length &&
+            !((input.allowUninstalledPersonal &&
+                grant.kind === "user" && grant.subjectUserId === userId) ||
+                (input.allowUninstalledShared && binding.mode === "shared" && grant.kind === "organization"))) {
+            if (connection.companyId === companyId) {
+                try {
+                    await db.insert(toolConnectionInstalls).values({
+                        companyId,
+                        connectionId: connection.id,
+                        targetType: "agent",
+                        targetId: agentId,
+                        createdByUserId: userId || connection.createdByUserId || null,
+                    }).onConflictDoNothing();
+                } catch (e) {}
+            } else {
+                throw forbidden("This connection is not permitted for this agent");
+            }
+        }`;
+      code = code.replace(targetPattern, replacement);
+      fs.writeFileSync(aiConnDist, code, 'utf-8');
+      console.log('[patch] server/dist/services/ai-connections.js auto-install permission unlocked');
+    }
+  }
+
+  const aiConnSrc = '/app/server/src/services/ai-connections.ts';
+  if (fs.existsSync(aiConnSrc)) {
+    let src = fs.readFileSync(aiConnSrc, 'utf-8');
+    const targetSrcPattern = /if\s*\(\s*!installs\.length\s*&&\s*!\(\s*\(input\.allowUninstalledPersonal[\s\S]*?throw forbidden\("This connection is not permitted for this agent"\);/m;
+    if (targetSrcPattern.test(src)) {
+      const srcReplacement = `if (
+      !installs.length &&
+      !(
+        (input.allowUninstalledPersonal &&
+          grant.kind === "user" && grant.subjectUserId === userId) ||
+        (input.allowUninstalledShared && binding.mode === "shared" && grant.kind === "organization")
+      )
+    ) {
+      if (connection.companyId === companyId) {
+        try {
+          await db.insert(toolConnectionInstalls).values({
+            companyId,
+            connectionId: connection.id,
+            targetType: "agent",
+            targetId: agentId,
+            createdByUserId: userId || connection.createdByUserId || null,
+          }).onConflictDoNothing();
+        } catch (e) {}
+      } else {
+        throw forbidden("This connection is not permitted for this agent");
+      }
+    }`;
+      src = src.replace(targetSrcPattern, srcReplacement);
+      fs.writeFileSync(aiConnSrc, src, 'utf-8');
+      console.log('[patch] server/src/services/ai-connections.ts auto-install permission unlocked');
+    }
+  }
+} catch (e) {
+  console.error('[patch] Error ai-connections permissions unlock:', e.message);
+}
+
 // 4. ENSURE AGY SYMLINK IN PATH
 try {
   const { execSync } = require('child_process');
@@ -646,5 +713,30 @@ try {
 } catch (e) {
   console.error('[patch] Error applying opencode instruction sync patch:', e.message);
 }
+
+// SYNC AI CONNECTIONS COMPANY INSTALLS IN DATABASE
+try {
+  const pPath = '/app/node_modules/.pnpm/postgres@3.4.9_patch_hash=sryle6qd5qfmnxvoebal4gashi/node_modules/postgres/src/index.js';
+  if (fs.existsSync(pPath)) {
+    import(pPath).then(async ({ default: postgres }) => {
+      try {
+        const sql = postgres("postgres://paperclip:paperclip@127.0.0.1:54329/paperclip", { timeout: 3 });
+        const aiConns = await sql`SELECT id, company_id, created_by_user_id FROM tool_connections WHERE connection_purpose = 'ai'`;
+        for (const conn of aiConns) {
+          const exists = await sql`SELECT id FROM tool_connection_installs WHERE company_id = ${conn.company_id} AND connection_id = ${conn.id} AND target_type = 'company'`;
+          if (exists.length === 0) {
+            const { randomUUID } = require('node:crypto');
+            await sql`INSERT INTO tool_connection_installs (id, company_id, connection_id, target_type, target_id, created_by_user_id, created_at)
+              VALUES (${randomUUID()}, ${conn.company_id}, ${conn.id}, 'company', ${conn.company_id}, ${conn.created_by_user_id}, NOW())`;
+            console.log('[patch] Auto-installed AI connection ' + conn.id + ' for company ' + conn.company_id);
+          }
+        }
+        await sql.end();
+      } catch (err) {
+        // silent if db not ready
+      }
+    }).catch(() => {});
+  }
+} catch (e) {}
 
 console.log('[patch] Patches completed.');
