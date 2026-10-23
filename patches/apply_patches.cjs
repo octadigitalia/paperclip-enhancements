@@ -323,22 +323,26 @@ try {
 try {
   const path = require('path');
   const indexHtmlPath = '/app/ui/dist/index.html';
-  const bundlePath = '/app/ui/dist/assets/index-v3.js';
   const assetsDir = '/app/ui/dist/assets';
 
   let baseSrc = null;
   if (fs.existsSync(assetsDir)) {
     const files = fs.readdirSync(assetsDir);
-    const candidate = files.find(f => f.startsWith('index-') && f.endsWith('.js') && f !== 'index-v3.js');
+    const candidate = files.find(f => f.startsWith('index-') && f.endsWith('.js') && !f.includes('enhanced') && !f.includes('v3'));
     if (candidate) {
       baseSrc = path.join(assetsDir, candidate);
     }
   }
 
-  if (baseSrc && fs.existsSync(baseSrc) && !fs.existsSync(bundlePath)) {
-    let code = fs.readFileSync(baseSrc, 'utf8');
+  if (baseSrc && fs.existsSync(baseSrc)) {
+    const baseName = path.basename(baseSrc);
+    const enhancedName = baseName.replace('index-', 'index-enhanced-');
+    const bundlePath = path.join(assetsDir, enhancedName);
 
-    const parserCode = `
+    if (!fs.existsSync(bundlePath)) {
+      let code = fs.readFileSync(baseSrc, 'utf8');
+
+      const parserCode = `
 function parseAntigravityLine(line,ts){
   var trimmed=line.trim();
   if(!trimmed)return[];
@@ -420,7 +424,7 @@ function parseAntigravityLine(line,ts){
 var antigravityLocalUIAdapter={type:'antigravity_local',label:'Google Antigravity',parseStdoutLine:parseAntigravityLine};
 `;
 
-    const opencodeParserCode = `
+      const opencodeParserCode = `
 function createOpenCodeStdoutParser(){
   var pendingTexts = [];
   return {
@@ -521,30 +525,31 @@ function createOpenCodeStdoutParser(){
 }
 `;
 
-    code = parserCode + '\n' + opencodeParserCode + '\n' + code;
+      code = parserCode + '\n' + opencodeParserCode + '\n' + code;
 
-    const targetRegisterMatch = code.match(/function\s+[A-Za-z0-9_$]+\(\)\{for\(const\s+[A-Za-z0-9_$]+\s+of\[/);
-    if (targetRegisterMatch) {
-      code = code.replace(targetRegisterMatch[0], targetRegisterMatch[0] + 'antigravityLocalUIAdapter,');
-      console.log('[patch] registerBuiltInUIAdapters patched with antigravityLocalUIAdapter');
+      const targetRegisterMatch = code.match(/function\s+[A-Za-z0-9_$]+\(\)\{for\(const\s+[A-Za-z0-9_$]+\s+of\[/);
+      if (targetRegisterMatch) {
+        code = code.replace(targetRegisterMatch[0], targetRegisterMatch[0] + 'antigravityLocalUIAdapter,');
+        console.log('[patch] registerBuiltInUIAdapters patched with antigravityLocalUIAdapter');
+      }
+
+      const targetOc = code.match(/type:"opencode_local",label:"OpenCode",parseStdoutLine:[A-Za-z0-9_$]+/);
+      if (targetOc) {
+        code = code.replace(targetOc[0], targetOc[0] + ',createStdoutParser:createOpenCodeStdoutParser');
+        console.log('[patch] opencode_local patched with createStdoutParser');
+      }
+
+      fs.writeFileSync(bundlePath, code, 'utf8');
+      console.log('[patch] ' + enhancedName + ' created with built-in antigravity adapter and opencode stateful parser');
     }
 
-    const targetOc = code.match(/type:"opencode_local",label:"OpenCode",parseStdoutLine:[A-Za-z0-9_$]+/);
-    if (targetOc) {
-      code = code.replace(targetOc[0], targetOc[0] + ',createStdoutParser:createOpenCodeStdoutParser');
-      console.log('[patch] opencode_local patched with createStdoutParser');
-    }
-
-    fs.writeFileSync(bundlePath, code, 'utf8');
-    console.log('[patch] index-v3.js created with built-in antigravity adapter and opencode stateful parser');
-  }
-
-  if (fs.existsSync(indexHtmlPath)) {
-    let html = fs.readFileSync(indexHtmlPath, 'utf8');
-    if (!html.includes('index-v3.js')) {
-      html = html.replace(/index-[a-zA-Z0-9_-]+.js/g, 'index-v3.js');
-      fs.writeFileSync(indexHtmlPath, html, 'utf8');
-      console.log('[patch] index.html updated to index-v3.js');
+    if (fs.existsSync(indexHtmlPath)) {
+      let html = fs.readFileSync(indexHtmlPath, 'utf8');
+      if (!html.includes(enhancedName)) {
+        html = html.replace(/src="\/assets\/index-[^"]+\.js"/g, 'src="/assets/' + enhancedName + '"');
+        fs.writeFileSync(indexHtmlPath, html, 'utf8');
+        console.log('[patch] index.html updated to ' + enhancedName);
+      }
     }
   }
 } catch (e) { console.error('[patch] Error frontend bundle patch:', e.message); }
