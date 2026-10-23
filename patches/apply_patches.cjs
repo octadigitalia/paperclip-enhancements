@@ -17,7 +17,7 @@ try {
     );
     const targetClaudeModels = `export const models = [
   { id: "claude-sonnet-5-5", label: "Claude Sonnet 5.5" },
-  { id: "sonnet", label: "Claude Sonnet (Latest / Padrão da Conta)" },
+  { id: "sonnet", label: "Claude Sonnet (Latest / PadrÃ£o da Conta)" },
   { id: "claude-opus-5-5", label: "Claude Opus 5.5" },
   { id: "claude-opus-5", label: "Claude Opus 5" },
   { id: "claude-sonnet-5", label: "Claude Sonnet 5" },
@@ -678,6 +678,35 @@ try {
   }
 } catch (e) {
   console.error('[patch] Error applying opencode instruction sync patch:', e.message);
+}
+
+// SYNC OPENCODE CONFIG DIRECTORIES (root and paperclip)
+try {
+  const rootOpencodeDir = '/root/.config/opencode';
+  const paperclipOpencodeDir = '/paperclip/.config/opencode';
+  if (fs.existsSync(paperclipOpencodeDir)) {
+    if (!fs.existsSync('/root/.config')) {
+      fs.mkdirSync('/root/.config', { recursive: true });
+    }
+    const rootConfigPath = '/root/.config/opencode/opencode.json';
+    const paperclipConfigPath = '/paperclip/.config/opencode/opencode.json';
+    if (!fs.existsSync(rootOpencodeDir)) {
+      try {
+        fs.symlinkSync(paperclipOpencodeDir, rootOpencodeDir);
+        console.log('[patch] Linked /root/.config/opencode -> /paperclip/.config/opencode');
+      } catch {
+        fs.mkdirSync(rootOpencodeDir, { recursive: true });
+      }
+    }
+    if (fs.existsSync(paperclipConfigPath) && !fs.existsSync(rootConfigPath)) {
+      try {
+        fs.copyFileSync(paperclipConfigPath, rootConfigPath);
+        console.log('[patch] Copied opencode.json to /root/.config/opencode/');
+      } catch {}
+    }
+  }
+} catch (e) {
+  console.error('[patch] Error syncing opencode config dir:', e.message);
 }
 
 // SYNC AI CONNECTIONS COMPANY INSTALLS IN DATABASE

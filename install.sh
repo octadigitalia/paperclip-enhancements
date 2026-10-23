@@ -47,6 +47,11 @@ if [ -d "$TMP_DIR/adapters/antigravity-local" ]; then
     echo -e "${GREEN}Google Antigravity adapter installed successfully.${RESET}"
 fi
 
+if [ -d "$TMP_DIR/adapters/opencode-local/src" ] && [ -d "/app/packages/adapters/opencode-local/src" ]; then
+    cp -r "$TMP_DIR/adapters/opencode-local/src/"* "/app/packages/adapters/opencode-local/src/"
+    echo -e "${GREEN}OpenCode local adapter updated successfully.${RESET}"
+fi
+
 echo -e "\n${YELLOW}[4/6] Registering adapter plugins in $TARGET_DIR/adapter-plugins.json...${RESET}"
 node - << 'NODE_SCRIPT'
 const fs = require('fs');
