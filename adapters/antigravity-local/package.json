@@ -1,0 +1,60 @@
+{
+  "name": "@octadigital/paperclip-adapter-antigravity-local",
+  "version": "0.3.1",
+  "description": "Google Antigravity CLI adapter plugin for Paperclip",
+  "license": "MIT",
+  "homepage": "https://github.com/octadigitalia/paperclip-adapter-antigravity-local",
+  "bugs": {
+    "url": "https://github.com/octadigitalia/paperclip-adapter-antigravity-local/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/octadigitalia/paperclip-adapter-antigravity-local.git"
+  },
+  "type": "module",
+  "paperclip": {
+    "adapterUiParser": "1.0.0"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./server": {
+      "types": "./dist/server/index.d.ts",
+      "import": "./dist/server/index.js",
+      "default": "./dist/server/index.js"
+    },
+    "./ui": {
+      "types": "./dist/ui/index.d.ts",
+      "import": "./dist/ui/index.js",
+      "default": "./dist/ui/index.js"
+    },
+    "./ui-parser": "./dist/ui-parser.js",
+    "./cli": {
+      "types": "./dist/cli/index.d.ts",
+      "import": "./dist/cli/index.js",
+      "default": "./dist/cli/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@paperclipai/adapter-utils": "^0.3.1",
+    "picocolors": "^1.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.6.0",
+    "typescript": "^5.7.3"
+  }
+}
