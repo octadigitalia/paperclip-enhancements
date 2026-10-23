@@ -259,7 +259,7 @@ export async function prepareOpenCodeRuntimeConfig(input: {
           if (!s || typeof s !== "object") continue;
           const sObj = s as Record<string, unknown>;
           const rawName = String(sObj.name || "").trim().toLowerCase();
-          const cleanName = rawName.replace(/[^a-z0-9_-]/g, "-") || "paperclip-server";
+          const cleanName = (rawName.startsWith("paperclip") ? "pc" : rawName.replace(/[^a-z0-9_-]/g, "-").slice(0, 8)) || "pc";
           if (typeof sObj.url === "string" && sObj.url.trim().length > 0) {
             const headers: Record<string, string> = {};
             if (isPlainObject(sObj.headers)) {

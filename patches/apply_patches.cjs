@@ -709,6 +709,60 @@ try {
   console.error('[patch] Error syncing opencode config dir:', e.message);
 }
 
+// 13. MCP GATEWAY TOOL NAME COMPACTING (Meta/OpenRouter 64-char tool name compatibility)
+try {
+  const mcpToolNamesDist = '/app/server/dist/services/mcp-tool-names.js';
+  if (fs.existsSync(mcpToolNamesDist)) {
+    let content = fs.readFileSync(mcpToolNamesDist, 'utf-8');
+    if (!content.includes('MAX_GATEWAY_TOOL_NAME_LENGTH = 44')) {
+      content = content.replace(
+        'export const ASSIGNED_MCP_SERVER_NAME = "paperclip-assigned";',
+        'export const ASSIGNED_MCP_SERVER_NAME = "pc";'
+      );
+      content = content.replace(
+        /export const MAX_GATEWAY_TOOL_NAME_LENGTH = [^;]+;/,
+        'export const MAX_GATEWAY_TOOL_NAME_LENGTH = 44;'
+      );
+      content = content.replace(
+        'const hash = createHash("sha256").update(JSON.stringify(identity)).digest("hex").slice(0, 16);',
+        'const hash = createHash("sha256").update(JSON.stringify(identity)).digest("hex").slice(0, 8);'
+      );
+      content = content.replace(
+        'const namespace = name.slice(0, separator < 0 ? name.length : separator).slice(0, 32);',
+        'const namespace = name.slice(0, separator < 0 ? name.length : separator).slice(0, 16);'
+      );
+      fs.writeFileSync(mcpToolNamesDist, content, 'utf-8');
+      console.log('[patch] Compacted MCP gateway tool names for 64-char model compatibility in dist');
+    }
+  }
+  const mcpToolNamesSrc = '/app/server/src/services/mcp-tool-names.ts';
+  if (fs.existsSync(mcpToolNamesSrc)) {
+    let content = fs.readFileSync(mcpToolNamesSrc, 'utf-8');
+    if (!content.includes('MAX_GATEWAY_TOOL_NAME_LENGTH = 44')) {
+      content = content.replace(
+        'export const ASSIGNED_MCP_SERVER_NAME = "paperclip-assigned";',
+        'export const ASSIGNED_MCP_SERVER_NAME = "pc";'
+      );
+      content = content.replace(
+        /export const MAX_GATEWAY_TOOL_NAME_LENGTH = [^;]+;/,
+        'export const MAX_GATEWAY_TOOL_NAME_LENGTH = 44;'
+      );
+      content = content.replace(
+        'const hash = createHash("sha256").update(JSON.stringify(identity)).digest("hex").slice(0, 16);',
+        'const hash = createHash("sha256").update(JSON.stringify(identity)).digest("hex").slice(0, 8);'
+      );
+      content = content.replace(
+        'const namespace = name.slice(0, separator < 0 ? name.length : separator).slice(0, 32);',
+        'const namespace = name.slice(0, separator < 0 ? name.length : separator).slice(0, 16);'
+      );
+      fs.writeFileSync(mcpToolNamesSrc, content, 'utf-8');
+      console.log('[patch] Compacted MCP gateway tool names in src');
+    }
+  }
+} catch (e) {
+  console.error('[patch] Error patching mcp-tool-names:', e.message);
+}
+
 // SYNC AI CONNECTIONS COMPANY INSTALLS IN DATABASE
 try {
   const pPath = '/app/node_modules/.pnpm/postgres@3.4.9_patch_hash=sryle6qd5qfmnxvoebal4gashi/node_modules/postgres/src/index.js';
