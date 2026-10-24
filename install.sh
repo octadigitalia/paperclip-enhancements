@@ -44,6 +44,10 @@ echo -e "\n${YELLOW}[3/6] Installing adapters to $TARGET_DIR/adapters...${RESET}
 if [ -d "$TMP_DIR/adapters/antigravity-local" ]; then
     rm -rf "$TARGET_DIR/adapters/antigravity-local"
     cp -r "$TMP_DIR/adapters/antigravity-local" "$TARGET_DIR/adapters/"
+    if [ -d "/app/server/node_modules" ]; then
+        ln -sfn "/app/server/node_modules" "$TARGET_DIR/adapters/antigravity-local/node_modules"
+        ln -sfn "/app/server/node_modules" "$TARGET_DIR/node_modules"
+    fi
     echo -e "${GREEN}Google Antigravity adapter installed successfully.${RESET}"
 fi
 

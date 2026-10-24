@@ -763,6 +763,34 @@ try {
   console.error('[patch] Error patching mcp-tool-names:', e.message);
 }
 
+// 14. SYNC NODE_MODULES SYMLINKS FOR EXTERNAL ADAPTERS
+try {
+  const path = require('node:path');
+  const targetDir = process.env.TARGET_DIR || process.env.PAPERCLIP_HOME || '/paperclip';
+  const serverNodeModules = '/app/server/node_modules';
+  if (fs.existsSync(serverNodeModules)) {
+    const paperclipNm = path.join(targetDir, 'node_modules');
+    if (!fs.existsSync(paperclipNm)) {
+      try {
+        fs.symlinkSync(serverNodeModules, paperclipNm);
+        console.log('[patch] Linked /paperclip/node_modules -> /app/server/node_modules');
+      } catch {}
+    }
+    const antigravityDir = path.join(targetDir, 'adapters/antigravity-local');
+    if (fs.existsSync(antigravityDir)) {
+      const antigravityNm = path.join(antigravityDir, 'node_modules');
+      if (!fs.existsSync(antigravityNm)) {
+        try {
+          fs.symlinkSync(serverNodeModules, antigravityNm);
+          console.log('[patch] Linked antigravity-local/node_modules -> /app/server/node_modules');
+        } catch {}
+      }
+    }
+  }
+} catch (e) {
+  console.error('[patch] Error syncing adapter node_modules:', e.message);
+}
+
 // SYNC AI CONNECTIONS COMPANY INSTALLS IN DATABASE
 try {
   const pPath = '/app/node_modules/.pnpm/postgres@3.4.9_patch_hash=sryle6qd5qfmnxvoebal4gashi/node_modules/postgres/src/index.js';
