@@ -2,6 +2,8 @@ const fs = require('fs');
 
 console.log('[patch] Running Paperclip runtime patches on dist and src...');
 
+let uiModified = false;
+
 // 1. CLAUDE LOCAL ADAPTER (src & dist if any)
 try {
   const claudePath = '/app/packages/adapters/claude-local/src/index.ts';
@@ -95,6 +97,36 @@ try {
   console.error('[patch] Error shared ai-connections:', e.message);
 }
 
+// 2d. SHARED AGENT VALIDATORS (Allow nullable aiConnection for free mode and antigravity)
+try {
+  const validatorFiles = [
+    '/app/packages/shared/dist/validators/agent.js',
+    '/app/packages/shared/src/validators/agent.ts'
+  ];
+  for (const fp of validatorFiles) {
+    if (fs.existsSync(fp)) {
+      let v = fs.readFileSync(fp, 'utf-8');
+      let changed = false;
+
+      // agentRuntimeConfigSchema & testAdapterEnvironmentSchema: allow aiConnection to be null
+      if (v.includes('aiConnection: aiConnectionBindingSchema.optional(),')) {
+        v = v.replaceAll(
+          'aiConnection: aiConnectionBindingSchema.optional(),',
+          'aiConnection: aiConnectionBindingSchema.optional().nullable(),'
+        );
+        changed = true;
+      }
+
+      if (changed) {
+        fs.writeFileSync(fp, v, 'utf-8');
+        console.log(`[patch] ${fp} patched for nullable aiConnection`);
+      }
+    }
+  }
+} catch (e) {
+  console.error('[patch] Error shared agent validators:', e.message);
+}
+
 // 3. SERVER ROUTES AGENTS (Runtime routes: agents.ts & agents.js)
 try {
   const agentRouteFiles = [
@@ -179,7 +211,6 @@ try {
 // 3d. UI CONNECTION PICKER & FREE MODE SUPPORT
 try {
   const { execSync } = require('child_process');
-  let uiModified = false;
 
   // 3d.1 Patch AiConnectionPicker.tsx
   const pickerPath = '/app/ui/src/components/ai-connections/AiConnectionPicker.tsx';
@@ -295,6 +326,15 @@ try {
       );
       formChanged = true;
       console.log('[patch] AgentConfigForm.tsx removed legacy prop from AiConnectionField');
+    }
+
+    // Preserve null aiConnection binding in AiConnectionField so free mode can be selected cleanly
+    const targetAiConnVal = 'value={aiRuntimeConnectionBindingSchema.safeParse((overlay.runtime.runtimeConfig as Record<string, unknown> | undefined)?.aiConnection ?? runtimeConfig.aiConnection).data}';
+    const cleanAiConnVal = 'value={((overlay.runtime.runtimeConfig as Record<string, unknown> | undefined)?.aiConnection !== undefined ? (overlay.runtime.runtimeConfig as Record<string, unknown> | undefined)?.aiConnection : runtimeConfig.aiConnection) ? aiRuntimeConnectionBindingSchema.safeParse((overlay.runtime.runtimeConfig as Record<string, unknown> | undefined)?.aiConnection !== undefined ? (overlay.runtime.runtimeConfig as Record<string, unknown> | undefined)?.aiConnection : runtimeConfig.aiConnection).data : undefined}';
+    if (form.includes(targetAiConnVal)) {
+      form = form.replace(targetAiConnVal, cleanAiConnVal);
+      formChanged = true;
+      console.log('[patch] AgentConfigForm.tsx patched AiConnectionField value prop for null preservation');
     }
 
     if (formChanged) {
@@ -596,7 +636,7 @@ try {
     const enhancedName = baseName.replace('index-', 'index-enhanced-');
     const bundlePath = path.join(assetsDir, enhancedName);
 
-    if (!fs.existsSync(bundlePath)) {
+    if (uiModified || !fs.existsSync(bundlePath)) {
       let code = fs.readFileSync(baseSrc, 'utf8');
 
       const parserCode = `
@@ -803,7 +843,7 @@ function createOpenCodeStdoutParser(){
     if (fs.existsSync(indexHtmlPath)) {
       let html = fs.readFileSync(indexHtmlPath, 'utf8');
       if (!html.includes(enhancedName)) {
-        html = html.replace(/src="\/assets\/index-[^"]+\.js"/g, 'src="/assets/' + enhancedName + '"');
+        html = html.replace(/src="\/assets\/index[^"]+\.js"/g, 'src="/assets/' + enhancedName + '"');
         fs.writeFileSync(indexHtmlPath, html, 'utf8');
         console.log('[patch] index.html updated to ' + enhancedName);
       }
