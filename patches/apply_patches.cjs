@@ -181,39 +181,125 @@ try {
   const { execSync } = require('child_process');
   let uiModified = false;
 
+  // 3d.1 Patch AiConnectionPicker.tsx
   const pickerPath = '/app/ui/src/components/ai-connections/AiConnectionPicker.tsx';
   if (fs.existsSync(pickerPath)) {
     let picker = fs.readFileSync(pickerPath, 'utf-8');
+    let pickerChanged = false;
     if (!picker.includes('id: "none"')) {
       picker = picker.replace(
-        'selectedId={value?.mode === "responsible_user" ? "responsible_user" : value?.connectionId}',
+        /selectedId=\{[^}]+\}/,
         'selectedId={!value ? "none" : value?.mode === "responsible_user" ? "responsible_user" : value?.connectionId}'
       );
       picker = picker.replace(
         'choices={[\n              { id: "responsible_user",',
-        'choices={[\n              { id: "none", name: "Sem conexão gerenciada (Modo gratuito / Chave de ambiente)", description: <>\n                <span className="block">Executa o agente sem conta gerenciada do Paperclip (usa modelos gratuitos ou variáveis de ambiente locais).</span>\n              </> },\n              { id: "responsible_user",'
+        'choices={[\n              { id: "none", name: "Sem conexao gerenciada (Modo gratuito / Chave de ambiente)", description: <>\n                <span className="block">Executa o agente sem conta gerenciada do Paperclip (usa modelos gratuitos ou variaveis de ambiente locais).</span>\n              </> },\n              { id: "responsible_user",'
       );
       picker = picker.replace(
         'onSelect={(id) => {\n              if (id === "responsible_user")',
         'onSelect={(id) => {\n              if (id === "none") onChange(null as unknown as AiConnectionBinding);\n              else if (id === "responsible_user")'
       );
+      pickerChanged = true;
+      console.log('[patch] AiConnectionPicker.tsx patched with free-mode option');
+    }
+    if (pickerChanged) {
       fs.writeFileSync(pickerPath, picker, 'utf-8');
       uiModified = true;
-      console.log('[patch] AiConnectionPicker.tsx patched with free-mode option');
     }
   }
 
+  // 3d.2 Patch AiConnectionField.tsx
+  const fieldPath = '/app/ui/src/components/ai-connections/AiConnectionField.tsx';
+  if (fs.existsSync(fieldPath)) {
+    let field = fs.readFileSync(fieldPath, 'utf-8');
+    let fieldChanged = false;
+    if (!field.includes('if (!binding) onChange(null as any)')) {
+      const oldOnChange = 'onChange={(binding) =>\n          changeBinding(aiConnectionBindingSchema.parse(binding))\n        }';
+      const newOnChange = 'onChange={(binding) => {\n          if (!binding) onChange(null as any);\n          else changeBinding(aiConnectionBindingSchema.parse(binding));\n        }}';
+      if (field.includes(oldOnChange)) {
+        field = field.replace(oldOnChange, newOnChange);
+        fieldChanged = true;
+      } else if (field.includes('changeBinding(aiConnectionBindingSchema.parse(binding))')) {
+        field = field.replace(
+          'changeBinding(aiConnectionBindingSchema.parse(binding))',
+          'if (!binding) onChange(null as any); else changeBinding(aiConnectionBindingSchema.parse(binding));'
+        );
+        fieldChanged = true;
+      }
+    }
+    if (field.includes('if (legacy && !value && !adopting)') && !field.includes('value !== null')) {
+      field = field.replace(
+        'if (legacy && !value && !adopting)',
+        'if (legacy && !value && !adopting && value !== null)'
+      );
+      fieldChanged = true;
+    }
+    if (fieldChanged) {
+      fs.writeFileSync(fieldPath, field, 'utf-8');
+      uiModified = true;
+      console.log('[patch] AiConnectionField.tsx patched to allow null free-mode binding');
+    }
+  }
+
+  // 3d.3 Patch AgentConfigForm.tsx
   const agentFormPath = '/app/ui/src/components/AgentConfigForm.tsx';
   if (fs.existsSync(agentFormPath)) {
     let form = fs.readFileSync(agentFormPath, 'utf-8');
-    if (!form.includes('t === "antigravity_local"') && form.includes('setOverlay((prev) => ({')) {
+    let formChanged = false;
+
+    // Remove any erroneous t === "antigravity_local" inside function mark(...)
+    const brokenMarkLine = '                      ...(t === "antigravity_local" ? { runtime: { ...prev.runtime, runtimeConfig: { ...(prev.runtime?.runtimeConfig as Record<string, unknown> | undefined), aiConnection: null } } } : {}),\n';
+    if (form.includes(brokenMarkLine)) {
+      form = form.replace(brokenMarkLine, '');
+      formChanged = true;
+      console.log('[patch] AgentConfigForm.tsx cleaned up broken mark() reference to t');
+    }
+
+    // In adapter onChange branch, cleanly inject antigravity_local handling
+    const targetBranch = 'setOverlay((prev) => ({\n                      ...prev,\n                      adapterType: t,\n                      adapterConfig: {';
+    const cleanBranch = `setOverlay((prev) => ({
+                      ...prev,
+                      adapterType: t,
+                      ...(t === "antigravity_local"
+                        ? {
+                            runtime: {
+                              ...prev.runtime,
+                              runtimeConfig: {
+                                ...((prev.runtime?.runtimeConfig as Record<string, unknown> | undefined) ?? {}),
+                                aiConnection: null,
+                              },
+                            },
+                          }
+                        : {}),
+                      adapterConfig: {`;
+    if (form.includes(targetBranch) && !form.includes('runtimeConfig: { ...((prev.runtime?.runtimeConfig')) {
+      form = form.replace(targetBranch, cleanBranch);
+      formChanged = true;
+      console.log('[patch] AgentConfigForm.tsx adapter onChange patched for antigravity_local');
+    }
+
+    // Default model to gemini-3.8-flash for antigravity_local
+    if (form.includes('t === "cursor"') && !form.includes('t === "antigravity_local"')) {
       form = form.replace(
-        'setOverlay((prev) => ({',
-        'setOverlay((prev) => ({\n                      ...(t === "antigravity_local" ? { runtime: { ...prev.runtime, runtimeConfig: { ...(prev.runtime?.runtimeConfig as Record<string, unknown> | undefined), aiConnection: null } } } : {}),'
+        't === "cursor"\n                              ? DEFAULT_CURSOR_LOCAL_MODEL\n                            : t === "paperclip_runner"',
+        't === "cursor"\n                              ? DEFAULT_CURSOR_LOCAL_MODEL\n                            : t === "antigravity_local"\n                              ? "gemini-3.8-flash"\n                            : t === "paperclip_runner"'
       );
+      formChanged = true;
+    }
+
+    // Remove legacy prop from AiConnectionField so it does not block free mode
+    if (form.includes('environmentId={currentDefaultEnvironmentId || undefined} legacy')) {
+      form = form.replace(
+        'environmentId={currentDefaultEnvironmentId || undefined} legacy',
+        'environmentId={currentDefaultEnvironmentId || undefined}'
+      );
+      formChanged = true;
+      console.log('[patch] AgentConfigForm.tsx removed legacy prop from AiConnectionField');
+    }
+
+    if (formChanged) {
       fs.writeFileSync(agentFormPath, form, 'utf-8');
       uiModified = true;
-      console.log('[patch] AgentConfigForm.tsx patched to clear connection on antigravity_local switch');
     }
   }
 
