@@ -36,56 +36,194 @@ try {
   console.error('[patch] Error claude-local:', e.message);
 }
 
-// 2. SHARED DIST AI-CONNECTIONS (Runtime compatibility)
+// 2. SHARED AI-CONNECTIONS (Runtime compatibility for both src and dist)
 try {
-  const sharedDist = '/app/packages/shared/dist/ai-connections.js';
-  if (fs.existsSync(sharedDist)) {
-    let s = fs.readFileSync(sharedDist, 'utf-8');
-    if (!s.includes('if (adapterType === "antigravity_local") return true;')) {
-      s = s.replace(
-        'export function isAiConnectionCompatible(requirement, adapterType, model, runnerProvider, acpxAgent) {',
-        'export function isAiConnectionCompatible(requirement, adapterType, model, runnerProvider, acpxAgent) {\n    if (adapterType === "antigravity_local") return true;'
-      );
-      fs.writeFileSync(sharedDist, s, 'utf-8');
-      console.log('[patch] packages/shared/dist/ai-connections.js patched successfully');
+  const sharedFiles = [
+    '/app/packages/shared/dist/ai-connections.js',
+    '/app/packages/shared/src/ai-connections.ts'
+  ];
+  for (const fp of sharedFiles) {
+    if (fs.existsSync(fp)) {
+      let s = fs.readFileSync(fp, 'utf-8');
+      let changed = false;
+
+      // 2a. isAiConnectionCompatible universal pass for antigravity_local and opencode_local
+      if (!s.includes('adapterType === "antigravity_local"') || !s.includes('adapterType === "opencode_local"')) {
+        const targetTs = 'export function isAiConnectionCompatible(\n  requirement: AiConnectionMetadata | AiConnectionBinding,\n  adapterType: string,\n  model?: unknown,\n  runnerProvider?: unknown,\n  acpxAgent?: unknown,\n): boolean {';
+        const replacementTs = 'export function isAiConnectionCompatible(\n  requirement: AiConnectionMetadata | AiConnectionBinding,\n  adapterType: string,\n  model?: unknown,\n  runnerProvider?: unknown,\n  acpxAgent?: unknown,\n): boolean {\n  if (adapterType === "antigravity_local" || adapterType === "opencode_local") return true;\n  if (!requirement || typeof requirement !== "object" || !("provider" in requirement)) return true;';
+
+        const targetJs = 'export function isAiConnectionCompatible(requirement, adapterType, model, runnerProvider, acpxAgent) {';
+        const replacementJs = 'export function isAiConnectionCompatible(requirement, adapterType, model, runnerProvider, acpxAgent) {\n  if (adapterType === "antigravity_local" || adapterType === "opencode_local") return true;\n  if (!requirement || typeof requirement !== "object" || !("provider" in requirement)) return true;';
+
+        if (s.includes(targetTs)) {
+          s = s.replace(targetTs, replacementTs);
+          changed = true;
+        } else if (s.includes(targetJs)) {
+          s = s.replace(targetJs, replacementJs);
+          changed = true;
+        } else if (s.includes('function isAiConnectionCompatible')) {
+          s = s.replace(/(function isAiConnectionCompatible[^{]+{)/, '$1\n  if (adapterType === "antigravity_local" || adapterType === "opencode_local") return true;\n  if (!requirement || typeof requirement !== "object" || !("provider" in requirement)) return true;');
+          changed = true;
+        }
+      }
+
+      // 2b. Add antigravity_local to capabilities lists if not present
+      if (!s.includes('"antigravity_local"') && s.includes('adapters: ["claude_local"]')) {
+        s = s.replace('adapters: ["claude_local"]', 'adapters: ["claude_local", "antigravity_local"]');
+        s = s.replace('adapters: ["codex_local"]', 'adapters: ["codex_local", "antigravity_local"]');
+        s = s.replace('adapters: ["opencode_local"]', 'adapters: ["opencode_local", "antigravity_local"]');
+        s = s.replace('adapters: ["grok_local"]', 'adapters: ["grok_local", "antigravity_local"]');
+        changed = true;
+      }
+
+      // 2c. Relax openrouter model prefix requirement for opencode_local
+      if (s.includes('requirement.provider !== "openrouter"') && !s.includes('adapterType === "opencode_local" ||')) {
+        s = s.replace(
+          'requirement.provider !== "openrouter" ||',
+          'requirement.provider !== "openrouter" || adapterType === "opencode_local" ||'
+        );
+        changed = true;
+      }
+
+      if (changed) {
+        fs.writeFileSync(fp, s, 'utf-8');
+        console.log(`[patch] ${fp} compatibility patched successfully`);
+      }
     }
   }
 } catch (e) {
-  console.error('[patch] Error shared dist:', e.message);
+  console.error('[patch] Error shared ai-connections:', e.message);
 }
 
-// 3. SERVER DIST ROUTES AGENTS (Runtime routes)
+// 3. SERVER ROUTES AGENTS (Runtime routes: agents.ts & agents.js)
 try {
-  const agentsDist = '/app/server/dist/routes/agents.js';
-  if (fs.existsSync(agentsDist)) {
-    let a = fs.readFileSync(agentsDist, 'utf-8');
-    
-    // 3a. Update Agent route: strip aiConnection when saving antigravity_local
-    const oldCode = 'if (existing.runtimeConfig.aiConnection && requestedRuntimeConfig && !requestedRuntimeConfig.aiConnection)\n            requestedRuntimeConfig.aiConnection = existing.runtimeConfig.aiConnection;';
-    const newCode = `if (requestedAdapterType === "antigravity_local") {
+  const agentRouteFiles = [
+    '/app/server/dist/routes/agents.js',
+    '/app/server/src/routes/agents.ts'
+  ];
+  for (const fp of agentRouteFiles) {
+    if (fs.existsSync(fp)) {
+      let a = fs.readFileSync(fp, 'utf-8');
+      let changed = false;
+
+      // 3a. Update Agent route: strip aiConnection when saving antigravity_local or when explicitly set to null/empty
+      const targetPattern = /if\s*\(existing\.runtimeConfig\.aiConnection\s*&&\s*requestedRuntimeConfig\s*&&\s*!requestedRuntimeConfig\.aiConnection\)\s*requestedRuntimeConfig\.aiConnection\s*=\s*existing\.runtimeConfig\.aiConnection;/;
+      
+      const newCode = `if (requestedAdapterType === "antigravity_local") {
             if (requestedRuntimeConfig) delete requestedRuntimeConfig.aiConnection;
             if (existing.runtimeConfig) delete existing.runtimeConfig.aiConnection;
             if (patchData.runtimeConfig) delete patchData.runtimeConfig.aiConnection;
+        } else if (requestedRuntimeConfig && (requestedRuntimeConfig.aiConnection === null || requestedRuntimeConfig.aiConnection === false || requestedRuntimeConfig.clearAiConnection === true)) {
+            delete requestedRuntimeConfig.aiConnection;
+            if (existing.runtimeConfig) delete existing.runtimeConfig.aiConnection;
+            if (patchData.runtimeConfig) delete patchData.runtimeConfig.aiConnection;
+        } else if (requestedAdapterType && requestedAdapterType !== existing.adapterType) {
+            const existingConn = requestedRuntimeConfig?.aiConnection ?? existing.runtimeConfig?.aiConnection;
+            if (existingConn && !isAiConnectionCompatible(existingConn, requestedAdapterType)) {
+                if (requestedRuntimeConfig) delete requestedRuntimeConfig.aiConnection;
+                if (existing.runtimeConfig) delete existing.runtimeConfig.aiConnection;
+                if (patchData.runtimeConfig) delete patchData.runtimeConfig.aiConnection;
+            } else if (existing.runtimeConfig.aiConnection && requestedRuntimeConfig && !requestedRuntimeConfig.aiConnection) {
+                requestedRuntimeConfig.aiConnection = existing.runtimeConfig.aiConnection;
+            }
         } else if (existing.runtimeConfig.aiConnection && requestedRuntimeConfig && !requestedRuntimeConfig.aiConnection) {
             requestedRuntimeConfig.aiConnection = existing.runtimeConfig.aiConnection;
         }`;
-    if (a.includes('existing.runtimeConfig.aiConnection && requestedRuntimeConfig && !requestedRuntimeConfig.aiConnection')) {
-      a = a.replace(/if\s*\(existing\.runtimeConfig\.aiConnection\s*&&\s*requestedRuntimeConfig\s*&&\s*!requestedRuntimeConfig\.aiConnection\)\s*requestedRuntimeConfig\.aiConnection\s*=\\s*existing\.runtimeConfig\.aiConnection;/s, newCode);
-      console.log('[patch] server/dist/routes/agents.js (update agent) patched');
-    }
 
-    // 3b. Test-Environment route: ignore aiBinding for antigravity_local
-    const oldTestBinding = 'const aiBinding = req.body.aiConnection ? aiConnectionBindingSchema.parse(req.body.aiConnection) : undefined;';
-    const newTestBinding = 'const aiBinding = (type === "antigravity_local") ? undefined : (req.body.aiConnection ? aiConnectionBindingSchema.parse(req.body.aiConnection) : undefined);';
-    if (a.includes(oldTestBinding)) {
-      a = a.replace(oldTestBinding, newTestBinding);
-      console.log('[patch] server/dist/routes/agents.js (test-environment) patched');
-    }
+      if (targetPattern.test(a)) {
+        a = a.replace(targetPattern, newCode);
+        changed = true;
+      }
 
-    fs.writeFileSync(agentsDist, a, 'utf-8');
+      // 3b. Don't throw incompatible harness error for antigravity_local or opencode_local
+      if (a.includes('throw unprocessable("Select an AI connection compatible with the new harness and model");') &&
+          !a.includes('requestedAdapterType !== "antigravity_local" && requestedAdapterType !== "opencode_local"')) {
+        a = a.replace(
+          'if (nextAiBinding.mode !== "router" && !isAiConnectionCompatible(nextAiBinding, requestedAdapterType, aiConfig.model, aiConfig.provider, aiConfig.acpxAgent)) throw unprocessable("Select an AI connection compatible with the new harness and model");',
+          'if (nextAiBinding.mode !== "router" && requestedAdapterType !== "antigravity_local" && requestedAdapterType !== "opencode_local" && !isAiConnectionCompatible(nextAiBinding, requestedAdapterType, aiConfig.model, aiConfig.provider, aiConfig.acpxAgent)) throw unprocessable("Select an AI connection compatible with the new harness and model");'
+        );
+        a = a.replace(
+          'if (nextAiBinding.mode !== "router" && !isAiConnectionCompatible(nextAiBinding, requestedAdapterType, aiConfig.model, aiConfig.provider, aiConfig.acpxAgent))\n                throw unprocessable("Select an AI connection compatible with the new harness and model");',
+          'if (nextAiBinding.mode !== "router" && requestedAdapterType !== "antigravity_local" && requestedAdapterType !== "opencode_local" && !isAiConnectionCompatible(nextAiBinding, requestedAdapterType, aiConfig.model, aiConfig.provider, aiConfig.acpxAgent))\n                throw unprocessable("Select an AI connection compatible with the new harness and model");'
+        );
+        changed = true;
+      }
+
+      // 3c. Test-Environment route: ignore aiBinding for antigravity_local
+      if (a.includes('const aiBinding = requestedBinding?.mode === "router" ? undefined : requestedBinding;') &&
+          !a.includes('type === "antigravity_local"')) {
+        a = a.replace(
+          'const aiBinding = requestedBinding?.mode === "router" ? undefined : requestedBinding;',
+          'const aiBinding = (type === "antigravity_local") ? undefined : (requestedBinding?.mode === "router" ? undefined : requestedBinding);'
+        );
+        changed = true;
+      } else if (a.includes('const aiBinding = req.body.aiConnection ? aiConnectionBindingSchema.parse(req.body.aiConnection) : undefined;') &&
+                 !a.includes('type === "antigravity_local"')) {
+        a = a.replace(
+          'const aiBinding = req.body.aiConnection ? aiConnectionBindingSchema.parse(req.body.aiConnection) : undefined;',
+          'const aiBinding = (type === "antigravity_local") ? undefined : (req.body.aiConnection ? aiConnectionBindingSchema.parse(req.body.aiConnection) : undefined);'
+        );
+        changed = true;
+      }
+
+      if (changed) {
+        fs.writeFileSync(fp, a, 'utf-8');
+        console.log(`[patch] ${fp} patched for flexible harness and connection switching`);
+      }
+    }
   }
 } catch (e) {
-  console.error('[patch] Error server dist agents:', e.message);
+  console.error('[patch] Error server agents route:', e.message);
+}
+
+// 3d. UI CONNECTION PICKER & FREE MODE SUPPORT
+try {
+  const { execSync } = require('child_process');
+  let uiModified = false;
+
+  const pickerPath = '/app/ui/src/components/ai-connections/AiConnectionPicker.tsx';
+  if (fs.existsSync(pickerPath)) {
+    let picker = fs.readFileSync(pickerPath, 'utf-8');
+    if (!picker.includes('id: "none"')) {
+      picker = picker.replace(
+        'selectedId={value?.mode === "responsible_user" ? "responsible_user" : value?.connectionId}',
+        'selectedId={!value ? "none" : value?.mode === "responsible_user" ? "responsible_user" : value?.connectionId}'
+      );
+      picker = picker.replace(
+        'choices={[\n              { id: "responsible_user",',
+        'choices={[\n              { id: "none", name: "Sem conexão gerenciada (Modo gratuito / Chave de ambiente)", description: <>\n                <span className="block">Executa o agente sem conta gerenciada do Paperclip (usa modelos gratuitos ou variáveis de ambiente locais).</span>\n              </> },\n              { id: "responsible_user",'
+      );
+      picker = picker.replace(
+        'onSelect={(id) => {\n              if (id === "responsible_user")',
+        'onSelect={(id) => {\n              if (id === "none") onChange(null as unknown as AiConnectionBinding);\n              else if (id === "responsible_user")'
+      );
+      fs.writeFileSync(pickerPath, picker, 'utf-8');
+      uiModified = true;
+      console.log('[patch] AiConnectionPicker.tsx patched with free-mode option');
+    }
+  }
+
+  const agentFormPath = '/app/ui/src/components/AgentConfigForm.tsx';
+  if (fs.existsSync(agentFormPath)) {
+    let form = fs.readFileSync(agentFormPath, 'utf-8');
+    if (!form.includes('t === "antigravity_local"') && form.includes('setOverlay((prev) => ({')) {
+      form = form.replace(
+        'setOverlay((prev) => ({',
+        'setOverlay((prev) => ({\n                      ...(t === "antigravity_local" ? { runtime: { ...prev.runtime, runtimeConfig: { ...(prev.runtime?.runtimeConfig as Record<string, unknown> | undefined), aiConnection: null } } } : {}),'
+      );
+      fs.writeFileSync(agentFormPath, form, 'utf-8');
+      uiModified = true;
+      console.log('[patch] AgentConfigForm.tsx patched to clear connection on antigravity_local switch');
+    }
+  }
+
+  if (uiModified) {
+    console.log('[patch] Rebuilding Paperclip UI with Vite...');
+    execSync('pnpm --filter ui run build', { cwd: '/app', stdio: 'inherit' });
+    console.log('[patch] Paperclip UI built successfully.');
+  }
+} catch (e) {
+  console.error('[patch] Error updating UI components:', e.message);
 }
 
 // 3c. SERVER AI CONNECTIONS PERMISSION UNLOCK (Allow company AI connections for all agents)
