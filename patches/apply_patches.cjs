@@ -127,6 +127,42 @@ try {
   console.error('[patch] Error shared agent validators:', e.message);
 }
 
+// 2e. AGENT FILE STORE (Prevent crash when agent workspace/instructions have symlinks)
+try {
+  const storeFiles = [
+    '/app/server/dist/services/agent-file-store.js',
+    '/app/server/src/services/agent-file-store.ts'
+  ];
+  for (const fp of storeFiles) {
+    if (fs.existsSync(fp)) {
+      let code = fs.readFileSync(fp, 'utf8');
+      let changed = false;
+      const oldBranch = 'else if (stat.isFile() && stat.nlink === 1) {';
+      const newBranch = 'else if (stat.isFile() || stat.isSymbolicLink()) {';
+      if (code.includes(oldBranch)) {
+        code = code.replace(oldBranch, newBranch);
+        changed = true;
+      }
+      const oldThrow = 'else throw unprocessable("Agent directories support regular files and directories, without links or special files");';
+      if (code.includes(oldThrow)) {
+        code = code.replace(oldThrow, 'else { /* ignore special files gracefully */ }');
+        changed = true;
+      }
+      const oldThrow2 = 'else\n                throw unprocessable("Agent directories support regular files and directories, without links or special files");';
+      if (code.includes(oldThrow2)) {
+        code = code.replace(oldThrow2, 'else { /* ignore special files gracefully */ }');
+        changed = true;
+      }
+      if (changed) {
+        fs.writeFileSync(fp, code, 'utf8');
+        console.log(`[patch] ${fp} patched to support symlinks gracefully`);
+      }
+    }
+  }
+} catch (e) {
+  console.error('[patch] Error agent-file-store patch:', e.message);
+}
+
 // 3. SERVER ROUTES AGENTS (Runtime routes: agents.ts & agents.js)
 try {
   const agentRouteFiles = [
