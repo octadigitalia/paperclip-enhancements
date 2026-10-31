@@ -141,11 +141,11 @@ try {
       // 3a. Update Agent route: strip aiConnection when saving antigravity_local or when explicitly set to null/empty
       const targetPattern = /if\s*\(existing\.runtimeConfig\.aiConnection\s*&&\s*requestedRuntimeConfig\s*&&\s*!requestedRuntimeConfig\.aiConnection\)\s*requestedRuntimeConfig\.aiConnection\s*=\s*existing\.runtimeConfig\.aiConnection;/;
       
-      const newCode = `if (requestedAdapterType === "antigravity_local") {
+      const newCode = `if (requestedAdapterType === "antigravity_local" || (requestedRuntimeConfig && requestedRuntimeConfig.aiConnection === null)) {
             if (requestedRuntimeConfig) delete requestedRuntimeConfig.aiConnection;
             if (existing.runtimeConfig) delete existing.runtimeConfig.aiConnection;
             if (patchData.runtimeConfig) delete patchData.runtimeConfig.aiConnection;
-        } else if (requestedRuntimeConfig && (requestedRuntimeConfig.aiConnection === null || requestedRuntimeConfig.aiConnection === false || requestedRuntimeConfig.clearAiConnection === true)) {
+        } else if (requestedRuntimeConfig && (requestedRuntimeConfig.aiConnection === false || requestedRuntimeConfig.clearAiConnection === true)) {
             delete requestedRuntimeConfig.aiConnection;
             if (existing.runtimeConfig) delete existing.runtimeConfig.aiConnection;
             if (patchData.runtimeConfig) delete patchData.runtimeConfig.aiConnection;
@@ -155,10 +155,10 @@ try {
                 if (requestedRuntimeConfig) delete requestedRuntimeConfig.aiConnection;
                 if (existing.runtimeConfig) delete existing.runtimeConfig.aiConnection;
                 if (patchData.runtimeConfig) delete patchData.runtimeConfig.aiConnection;
-            } else if (existing.runtimeConfig.aiConnection && requestedRuntimeConfig && !requestedRuntimeConfig.aiConnection) {
+            } else if (existing.runtimeConfig.aiConnection && requestedRuntimeConfig && requestedRuntimeConfig.aiConnection === undefined) {
                 requestedRuntimeConfig.aiConnection = existing.runtimeConfig.aiConnection;
             }
-        } else if (existing.runtimeConfig.aiConnection && requestedRuntimeConfig && !requestedRuntimeConfig.aiConnection) {
+        } else if (existing.runtimeConfig.aiConnection && requestedRuntimeConfig && requestedRuntimeConfig.aiConnection === undefined) {
             requestedRuntimeConfig.aiConnection = existing.runtimeConfig.aiConnection;
         }`;
 
@@ -312,7 +312,7 @@ try {
     // Default model to gemini-3.8-flash for antigravity_local
     if (form.includes('t === "cursor"') && !form.includes('t === "antigravity_local"')) {
       form = form.replace(
-        't === "cursor"\n                              ? DEFAULT_CURSOR_LOCAL_MODEL\n                            : t === "paperclip_runner"',
+        /t === "cursor"\s*\?\s*DEFAULT_CURSOR_LOCAL_MODEL\s*:\s*t === "paperclip_runner"/,
         't === "cursor"\n                              ? DEFAULT_CURSOR_LOCAL_MODEL\n                            : t === "antigravity_local"\n                              ? "gemini-3.8-flash"\n                            : t === "paperclip_runner"'
       );
       formChanged = true;
@@ -718,7 +718,7 @@ function parseAntigravityLine(line,ts){
     return[{kind:'stdout',ts:ts,text:line}];
   }
 }
-var antigravityLocalUIAdapter={type:'antigravity_local',label:'Google Antigravity',parseStdoutLine:parseAntigravityLine};
+var antigravityLocalUIAdapter={type:'antigravity_local',label:'Google Antigravity',parseStdoutLine:parseAntigravityLine,ConfigFields:function(){return null;},buildAdapterConfig:function(c){return c||{};}};
 `;
 
       const opencodeParserCode = `
